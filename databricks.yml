@@ -1,0 +1,46 @@
+bundle:
+  name: easyvisa-mlops
+
+include:
+  - resources/*.yml
+
+# Build the wheel so the job clusters can `import easyvisa`
+artifacts:
+  easyvisa_wheel:
+    type: whl
+    build: python setup.py bdist_wheel
+    path: .
+
+variables:
+  env:
+    description: Logical environment name passed to the jobs.
+    default: dev
+  catalog:
+    description: Unity Catalog catalog.
+    default: onedatalakehouse_datascience_we
+  schema:
+    description: Unity Catalog schema.
+    default: easyvisa_dev
+  node_type_id:
+    description: Cluster node type.
+    default: Standard_DS3_v2
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://REPLACE-WITH-YOUR-WORKSPACE.azuredatabricks.net
+    variables:
+      env: dev
+      schema: easyvisa_dev
+
+  prod:
+    mode: production
+    workspace:
+      host: https://REPLACE-WITH-YOUR-WORKSPACE.azuredatabricks.net
+    variables:
+      env: prod
+      schema: easyvisa_prod
+    run_as:
+      service_principal_name: REPLACE-WITH-SERVICE-PRINCIPAL-APP-ID

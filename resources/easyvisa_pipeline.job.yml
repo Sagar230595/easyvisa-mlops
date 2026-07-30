@@ -1,0 +1,72 @@
+resources:
+  jobs:
+    easyvisa_training_pipeline:
+      name: "[${var.env}] EasyVisa Training Pipeline"
+
+      job_clusters:
+        - job_cluster_key: easyvisa_cluster
+          new_cluster:
+            spark_version: 15.4.x-cpu-ml-scala2.12
+            node_type_id: ${var.node_type_id}
+            num_workers: 1
+            data_security_mode: SINGLE_USER
+
+      tasks:
+        - task_key: data_ingestion
+          job_cluster_key: easyvisa_cluster
+          spark_python_task:
+            python_file: ${workspace.file_path}/workflows/01_data_ingestion.py
+            parameters: ["--env", "${var.env}", "--catalog", "${var.catalog}", "--schema", "${var.schema}"]
+          libraries:
+            - whl: ./dist/*.whl
+
+        - task_key: feature_engineering
+          depends_on:
+            - task_key: data_ingestion
+          job_cluster_key: easyvisa_cluster
+          spark_python_task:
+            python_file: ${workspace.file_path}/workflows/02_feature_engineering.py
+            parameters: ["--env", "${var.env}", "--catalog", "${var.catalog}", "--schema", "${var.schema}"]
+          libraries:
+            - whl: ./dist/*.whl
+
+        - task_key: model_training
+          depends_on:
+            - task_key: feature_engineering
+          job_cluster_key: easyvisa_cluster
+          spark_python_task:
+            python_file: ${workspace.file_path}/workflows/03_model_training.py
+            parameters: ["--env", "${var.env}", "--catalog", "${var.catalog}", "--schema", "${var.schema}"]
+          libraries:
+            - whl: ./dist/*.whl
+
+        - task_key: batch_inference
+          depends_on:
+            - task_key: model_training
+          job_cluster_key: easyvisa_cluster
+          spark_python_task:
+            python_file: ${workspace.file_path}/workflows/04_inference.py
+            parameters: ["--env", "${var.env}", "--catalog", "${var.catalog}", "--schema", "${var.schema}"]
+          libraries:
+            - whl: ./dist/*.whl
+
+    easyvisa_monitoring:
+      name: "[${var.env}] EasyVisa Drift Monitoring"
+      schedule:
+        quartz_cron_expression: "0 0 6 ? * MON"
+        timezone_id: "UTC"
+      job_clusters:
+        - job_cluster_key: easyvisa_cluster
+          new_cluster:
+            spark_version: 15.4.x-cpu-ml-scala2.12
+            node_type_id: ${var.node_type_id}
+            num_workers: 1
+            data_security_mode: SINGLE_USER
+      tasks:
+        - task_key: monitoring
+          job_cluster_key: easyvisa_cluster
+          spark_python_task:
+            python_file: ${workspace.file_path}/workflows/05_model_monitoring.py
+            parameters: ["--env", "${var.env}", "--catalog", "${var.catalog}", "--schema", "${var.schema}"]
+          libraries:
+            - whl: ./dist/*.whl

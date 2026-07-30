@@ -1,0 +1,255 @@
+================================================================================
+EASYVISA MLOps ON DATABRICKS - END TO END IMPLEMENTATION STEPS
+(GitHub + Databricks Asset Bundles + Unity Catalog + MLflow)
+================================================================================
+
+This guide takes you from an empty GitHub repo to a fully automated, CI/CD-driven
+MLOps pipeline running on Databricks. The project predicts US visa certification
+(case_status: Certified / Denied) from the EasyVisa dataset.
+
+Pipeline stages (one Python module + one job entrypoint each):
+  01 data_ingestion      raw CSV (UC Volume)      -> bronze Delta table
+  02 feature_engineering cleaning + feature build -> features Delta table
+  03 train               Optuna + CV CatBoost     -> MLflow run + UC model @champion
+  04 inference           champion model           -> predictions Delta + CSV export
+  05 monitoring          data & model drift        -> drift report + MLflow metrics
+
+--------------------------------------------------------------------------------
+0. PREREQUISITES
+--------------------------------------------------------------------------------
+- A Databricks workspace with Unity Catalog enabled.
+- Permission to create a schema (and ideally a Volume) in a UC catalog.
+  Default in this project: catalog = onedatalakehouse_datascience_we
+                           schema  = easyvisa_dev  (and easyvisa_prod for prod)
+- A GitHub account/repo.
+- Local machine with: git, Python 3.10+, and the Databricks CLI (v0.2+ / the
+  new CLI that supports "bundle"). Install:
+      curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+      databricks --version
+- Databricks personal access token (PAT) for local + CI use:
+      Workspace -> User Settings -> Developer -> Access tokens -> Generate.
+
+--------------------------------------------------------------------------------
+1. GET THE CODE INTO GITHUB
+--------------------------------------------------------------------------------
+1.1  Unzip this project locally.
+1.2  Initialise and push:
+        cd easyvisa-mlops
+        git init
+        git add .
+        git commit -m "Initial EasyVisa MLOps project"
+        git branch -M main
+        git remote add origin https://github.com/<you>/easyvisa-mlops.git
+        git push -u origin main
+1.3  Protect main (recommended): GitHub -> Settings -> Branches -> Add rule for
+     "main" -> Require pull request + Require status checks (select the CI job).
+
+--------------------------------------------------------------------------------
+2. DATABRICKS: UNITY CATALOG, SCHEMA, VOLUMES, UPLOAD DATA
+--------------------------------------------------------------------------------
+Run this in a Databricks SQL editor or notebook (adjust catalog if needed):
+
+    CREATE SCHEMA IF NOT EXISTS onedatalakehouse_datascience_we.easyvisa_dev;
+    CREATE SCHEMA IF NOT EXISTS onedatalakehouse_datascience_we.easyvisa_prod;
+
+    -- Volumes for raw input and CSV exports (dev shown; repeat for prod)
+    CREATE VOLUME IF NOT EXISTS onedatalakehouse_datascience_we.easyvisa_dev.raw;
+    CREATE VOLUME IF NOT EXISTS onedatalakehouse_datascience_we.easyvisa_dev.exports;
+
+Upload the dataset to the raw Volume:
+  - UI: Catalog -> ... easyvisa_dev -> raw -> Upload, put EasyVisa.csv at
+        /Volumes/onedatalakehouse_datascience_we/easyvisa_dev/raw/EasyVisa.csv
+  - or CLI:
+        databricks fs cp data/EasyVisa.csv \
+          dbfs:/Volumes/onedatalakehouse_datascience_we/easyvisa_dev/raw/EasyVisa.csv
+
+Make sure the MLflow experiment folder exists / is writable:
+        /Shared/easyvisa_visa_approval_experiments   (created automatically on
+        first run by mlflow.set_experiment).
+
+--------------------------------------------------------------------------------
+3. CONNECT DATABRICKS TO GITHUB (Git integration)
+--------------------------------------------------------------------------------
+This is separate from CI/CD; it lets you browse/edit the repo inside Databricks.
+3.1  Add a Git credential: Databricks -> User Settings -> Linked accounts /
+     Git integration -> provider GitHub -> paste a GitHub PAT (repo scope) or use
+     the GitHub App / OAuth.
+3.2  Add a Git folder (Repo): Workspace -> Create -> Git folder -> paste the repo
+     HTTPS URL -> it clones into /Workspace/Users/<you>/easyvisa-mlops.
+     You can now open workflows/*.py or run them interactively while developing.
+
+(For automated deployment we use Asset Bundles from GitHub Actions - section 6/7 -
+ not the Git folder. The Git folder is just for interactive work.)
+
+--------------------------------------------------------------------------------
+4. CONFIGURE THE DATABRICKS CLI LOCALLY
+--------------------------------------------------------------------------------
+    databricks configure --token
+        Host:  https://<your-workspace>.azuredatabricks.net
+        Token: <your PAT>
+
+    # sanity check
+    databricks current-user me
+
+Edit databricks.yml and set the real workspace host for BOTH targets
+(dev and prod), and for prod set run_as.service_principal_name (or remove the
+run_as block to run as yourself while testing).
+
+--------------------------------------------------------------------------------
+5. BUILD & DEPLOY THE BUNDLE TO DEV (manual first run)
+--------------------------------------------------------------------------------
+From the repo root:
+
+    databricks bundle validate -t dev
+    databricks bundle deploy   -t dev      # builds the wheel, uploads files+jobs
+
+This creates two jobs in the workspace (names prefixed with [dev]):
+    - EasyVisa Training Pipeline  (ingestion -> features -> train -> inference)
+    - EasyVisa Drift Monitoring   (scheduled weekly)
+
+Run the training pipeline once:
+
+    databricks bundle run easyvisa_training_pipeline -t dev
+
+Verify results:
+    - Tables:  onedatalakehouse_datascience_we.easyvisa_dev.easyvisa_bronze,
+               easyvisa_features, easyvisa_drift_reference, easyvisa_predictions
+    - Model:   Catalog -> Models -> easyvisa_visa_approval  (alias @champion set)
+    - MLflow:  /Shared/easyvisa_visa_approval_experiments (runs, metrics, FI)
+    - Export:  /Volumes/.../easyvisa_dev/exports/easyvisa_predictions_*.csv
+
+Run monitoring on demand:
+    databricks bundle run easyvisa_monitoring -t dev
+
+--------------------------------------------------------------------------------
+6. CI - AUTOMATED TESTS ON EVERY PULL REQUEST (.github/workflows/ci.yml)
+--------------------------------------------------------------------------------
+CI runs on pull_request and push to main. It:
+    - installs requirements-dev.txt (light: pandas/numpy/pyyaml/pytest/ruff)
+    - lints with ruff
+    - runs pytest (pure unit tests in tests/, no Spark needed - fast)
+
+Nothing to configure; it works as soon as the repo is on GitHub. Make the CI
+"test" job a required status check (section 1.3) so no PR merges while red.
+
+Extend the tests over time (e.g. add pyspark to requirements-dev and test the
+Spark transforms with a local SparkSession if you want deeper coverage).
+
+--------------------------------------------------------------------------------
+7. CD - AUTOMATED DEPLOY FROM GITHUB (.github/workflows/cd.yml)
+--------------------------------------------------------------------------------
+Strategy in this repo:
+    - push to main         -> deploy bundle to the DEV target
+    - push a tag v*        -> deploy bundle to the PROD target
+      (e.g.  git tag v0.1.0 && git push origin v0.1.0)
+
+7.1  Add GitHub repo secrets (Settings -> Secrets and variables -> Actions):
+        DATABRICKS_HOST   = https://<your-workspace>.azuredatabricks.net
+        DATABRICKS_TOKEN  = <PAT for a service principal or your user>
+     For production, prefer a Service Principal token over a personal one:
+        Databricks -> Admin settings -> Service principals -> create one,
+        grant it USE CATALOG/SCHEMA + CREATE TABLE/MODEL/VOLUME on the prod
+        schema and CAN_MANAGE on the jobs, then generate a token for it and use
+        that as DATABRICKS_TOKEN. Set its app id in databricks.yml run_as.
+     (Even better: OIDC federation instead of a static token - Databricks ->
+      Settings -> Identity federation. Then drop DATABRICKS_TOKEN and use the
+      databricks/setup-cli OIDC flow.)
+
+7.2  The workflow validates then deploys the bundle. Optionally uncomment the
+     final step in cd.yml to also trigger a training run after a prod deploy.
+
+7.3  Typical flow:
+        feature branch -> open PR      => CI runs (lint + tests)
+        merge to main                  => CD deploys to DEV
+        git tag v0.2.0 && push tag     => CD deploys to PROD
+
+--------------------------------------------------------------------------------
+8. MODEL PROMOTION & THE @champion ALIAS
+--------------------------------------------------------------------------------
+- train.py registers a new model version in Unity Catalog and sets the
+  @champion alias to it. Inference and monitoring always load
+  models:/<catalog>.<schema>.easyvisa_visa_approval@champion.
+- To gate promotion (recommended for prod): instead of auto-aliasing in train.py,
+  register the version, then have a manual/approval step (or a separate job/task)
+  compare its test_auc against the current champion and only move @champion if it
+  is better. You can also add a @challenger alias and A/B before promotion.
+- Roll back instantly by re-pointing @champion to a previous version:
+      from mlflow.tracking import MlflowClient
+      MlflowClient(registry_uri="databricks-uc").set_registered_model_alias(
+          "<catalog>.<schema>.easyvisa_visa_approval", "champion", <old_version>)
+
+--------------------------------------------------------------------------------
+9. MONITORING & RETRAINING LOOP
+--------------------------------------------------------------------------------
+- easyvisa_monitoring runs weekly (cron in resources/easyvisa_pipeline.job.yml).
+  It computes PSI + KS data drift per feature and prediction/performance drift
+  (AUC vs the training baseline), logs metrics to MLflow, appends a row to
+  easyvisa_drift_report, and prints a plain-language summary.
+- Monitoring is informational: it reports drift, it does not auto-retrain.
+- Wire retraining however suits you:
+    (a) schedule easyvisa_training_pipeline on a cadence (add a schedule block),
+        or
+    (b) alert on the drift_report table / MLflow "data_drift"/"model_drift"
+        metrics and trigger the training job (databricks bundle run ...) from a
+        webhook or a follow-on task.
+
+--------------------------------------------------------------------------------
+10. HOW THE FEATURE ENGINEERING WORKS (for reference)
+--------------------------------------------------------------------------------
+Cleaning (data_preprocessing.py):
+    - drop case_id (identifier)
+    - fix ~33 negative no_of_employees via absolute value
+    - de-duplicate rows
+    - keep only valid target values (Certified / Denied)
+Feature engineering (feature_engineering.py):
+    - company_age   = reference_year - yr_of_estab  (clamped at 0)
+    - annual_wage   = prevailing_wage * unit multiplier
+                      (Hour x2080, Week x52, Month x12, Year x1)
+    - case_status_label = 1 if Certified else 0  (training target)
+Model features:
+    numeric     : no_of_employees, company_age, annual_wage
+    categorical : continent, education_of_employee, has_job_experience,
+                  requires_job_training, region_of_employment, unit_of_wage,
+                  full_time_position
+Models (multi-model tuning): CatBoost, LightGBM, XGBoost, RandomForest and
+       LogisticRegression. Each family gets its own Optuna TPE study
+       maximising 5-fold CV AUC. Every family is logged as a NESTED MLflow
+       run (best params, every trial's AUC as a metric series, a trials.csv
+       artifact, holdout metrics, and the fitted model). The best family by
+       holdout AUC is registered in the UC registry and promoted to @champion;
+       inference and monitoring load whichever flavor won via model tags.
+       Configure the list via Config.candidate_models / n_trials (per model).
+
+--------------------------------------------------------------------------------
+11. CONFIGURATION KNOBS
+--------------------------------------------------------------------------------
+- Per-environment settings: conf/dev.yml, conf/prod.yml (catalog/schema/n_trials).
+- Bundle variables: databricks.yml -> variables (env, catalog, schema,
+  node_type_id). Override at deploy: databricks bundle deploy -t dev --var="node_type_id=Standard_DS4_v2"
+- Job parameters flow: bundle var -> job task parameters -> workflow argparse ->
+  Config.load(env, overrides) inside each stage.
+- All table/model/volume names live in src/easyvisa/config.py (Config dataclass).
+
+--------------------------------------------------------------------------------
+12. TROUBLESHOOTING
+--------------------------------------------------------------------------------
+- "bundle validate" path errors: confirm python_file uses
+  ${workspace.file_path}/workflows/..., and that "databricks bundle deploy"
+  actually synced the workflows/ folder (it syncs the whole repo by default).
+- Wheel not found on cluster: ensure the "artifacts" build ran (needs wheel +
+  setuptools locally / on the runner) and that libraries: - whl: ./dist/*.whl
+  resolves; run "databricks bundle deploy" from the repo root.
+- Cannot register model / numeric name: this project uses a descriptive UC model
+  name, so no numeric-name issue. Ensure the SP/user has CREATE MODEL on the
+  schema and the registry uri is databricks-uc.
+- Volume write fails in inference: confirm the exports Volume exists and the
+  run identity has WRITE VOLUME on it.
+- ML runtime: the job clusters use 15.4.x-cpu-ml (has mlflow); catboost/optuna
+  are installed via the project wheel's dependencies. If a dependency is missing
+  on the cluster, add it under libraries: in the job task.
+- KS/PSI errors on first monitoring run: monitoring needs the drift reference
+  table, which train.py writes - run the training pipeline before monitoring.
+
+================================================================================
+END
+================================================================================

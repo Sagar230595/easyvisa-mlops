@@ -1,0 +1,42 @@
+name: CD
+
+on:
+  push:
+    branches: [main]        # deploy to dev on merge to main
+    tags: ["v*"]            # deploy to prod on a version tag
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install build + CLI
+        run: |
+          pip install wheel setuptools
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+
+      - name: Select target
+        id: target
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "target=prod" >> "$GITHUB_OUTPUT"
+          else
+            echo "target=dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate bundle
+        run: databricks bundle validate -t ${{ steps.target.outputs.target }}
+
+      - name: Deploy bundle
+        run: databricks bundle deploy -t ${{ steps.target.outputs.target }}
+
+      # Optional: kick off a training run right after a prod deploy
+      # - name: Run training pipeline
+      #   if: steps.target.outputs.target == 'prod'
+      #   run: databricks bundle run easyvisa_training_pipeline -t prod
