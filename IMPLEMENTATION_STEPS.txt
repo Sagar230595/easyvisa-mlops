@@ -14,6 +14,102 @@ Pipeline stages (one Python module + one job entrypoint each):
   04 inference           champion model           -> predictions Delta + CSV export
   05 monitoring          data & model drift        -> drift report + MLflow metrics
 
+================================================================================
+CONFIGURATION REFERENCE - EDIT THESE FOR YOUR SETUP (read this first)
+================================================================================
+Everything you must change lives in a handful of files. Change a value once in
+the file listed below and the other files read it from there. Quick checklist
+first, then per-file detail with WHERE TO GET each value.
+
+QUICK CHECKLIST (minimum to deploy):
+  [ ] databricks.yml            -> workspace host (dev + prod), prod service principal
+  [ ] conf/dev.yml              -> catalog, schema (dev)
+  [ ] conf/prod.yml             -> catalog, schema (prod)
+  [ ] GitHub repo secrets       -> DATABRICKS_HOST, DATABRICKS_TOKEN
+  [ ] Unity Catalog             -> create catalog.schema + raw/exports Volumes, upload CSV
+  [ ] (optional) conf/*.yml     -> retrain thresholds, n_trials
+  [ ] (optional) resources/*.yml-> cluster spark_version / node_type_id / cron schedule
+
+--------------------------------------------------------------------------------
+FILE: databricks.yml
+  * workspace.host   (BOTH targets: dev AND prod)
+      Placeholder : https://REPLACE-WITH-YOUR-WORKSPACE.azuredatabricks.net
+      Where to get: your Databricks workspace URL from the browser address bar,
+                    e.g. https://adb-7405608137157324.4.azuredatabricks.net
+                    Use the same host for both, or different hosts if dev and prod
+                    are separate workspaces.
+  * targets.prod.run_as.service_principal_name
+      Placeholder : REPLACE-WITH-SERVICE-PRINCIPAL-APP-ID
+      Where to get: Databricks -> Settings -> Identity and access -> Service
+                    principals -> (your SP) -> Application ID.
+                    (For quick testing you may delete the run_as block to deploy as yourself.)
+  * variables.node_type_id (default Standard_DS3_v2, Azure)
+      Change only if you use AWS/GCP node types.
+
+FILE: conf/dev.yml  and  conf/prod.yml   (these OVERRIDE config.py per environment)
+  * catalog : your Unity Catalog catalog (default onedatalakehouse_datascience_we)
+  * schema  : per-env schema (easyvisa_dev / easyvisa_prod) - rename to your convention
+  * n_trials: Optuna trials per model (dev 20 / prod 40) - lower = faster/cheaper
+  * optional retrain knobs you can add here:
+        auto_retrain: true
+        min_auc_threshold: 0.75
+        psi_threshold: 0.2
+        auc_drop_threshold: 0.05
+      Where to get catalog/schema: whatever you create in Unity Catalog (section 2).
+
+FILE: src/easyvisa/config.py   (global DEFAULTS - only edit to change them everywhere)
+  * catalog / schema defaults           (normally overridden by conf/*.yml)
+  * table names                         (bronze/features/reference/drift_report/predictions)
+  * experiment_path                     /Shared/easyvisa_visa_approval_experiments
+  * model_base_name                     easyvisa_visa_approval
+                                        -> UC model <catalog>.<schema>.easyvisa_visa_approval
+  * reference_year                      2016 (used to compute company_age)
+  * candidate_models                    which algorithms get tuned
+  * training_job_match                  "EasyVisa Training Pipeline" - substring used to
+                                        FIND the job to retrain. If you rename the job,
+                                        update this so auto-retrain can locate it.
+
+FILE: resources/easyvisa_pipeline.job.yml
+  * new_cluster.spark_version           15.4.x-cpu-ml-scala2.12 -> your DBR ML version
+  * node_type_id                        comes from ${var.node_type_id} (set in databricks.yml)
+  * spark_python_task.python_file       ${workspace.file_path}/workflows/... LEAVE AS-IS
+  * libraries whl                       ./dist/*.whl  LEAVE AS-IS (bundle builds the wheel)
+  * schedule.quartz_cron_expression     "0 0 6 ? * MON" (Mon 06:00 UTC) - change cadence/tz
+  * condition_task/run_job block        commented at file end - uncomment for no-code
+                                        retraining orchestration (see section 13)
+
+FILE: .github/workflows/cd.yml   + GitHub repo Secrets
+  * secrets.DATABRICKS_HOST             same workspace URL as databricks.yml
+  * secrets.DATABRICKS_TOKEN            a PAT (prefer a service-principal token for prod)
+      Where to get token: Databricks -> Settings -> Developer -> Access tokens -> Generate.
+      Where to put both : GitHub repo -> Settings -> Secrets and variables -> Actions ->
+                          New repository secret.
+  * triggers                            push main -> dev, tag v* -> prod (adjust to your gitflow)
+
+FILE: .github/workflows/ci.yml
+  * python-version (3.11)               change only if you need another runtime. No secrets.
+
+FILE: app/app.yaml  and  app/streamlit_app.py   (Streamlit prediction app)
+  * app.yaml command                    start command - leave as-is unless you rename the file
+  * streamlit_app.py env default        sidebar defaults to "prod" (which model it loads)
+  * auth                                DATABRICKS_HOST/TOKEN locally; service principal on
+                                        Databricks Apps. The app identity needs EXECUTE on the
+                                        UC model + USE on catalog/schema.
+
+UNITY CATALOG OBJECTS YOU CREATE (names MUST match conf/*.yml):
+  * catalog.schema        onedatalakehouse_datascience_we.easyvisa_dev (and _prod)
+  * Volume raw            /Volumes/<catalog>/<schema>/raw      (upload EasyVisa.csv here)
+  * Volume exports        /Volumes/<catalog>/<schema>/exports  (prediction CSVs land here)
+  * MLflow experiment     /Shared/easyvisa_visa_approval_experiments (auto-created on first run)
+
+RULE OF THUMB:
+  - change catalog/schema ONLY in conf/dev.yml and conf/prod.yml
+  - change the workspace host ONLY in databricks.yml
+  - put tokens ONLY in GitHub secrets
+  Everything else derives from those. After editing, run:
+      databricks bundle validate -t dev
+  to catch any mistake before deploying.
+
 --------------------------------------------------------------------------------
 0. PREREQUISITES
 --------------------------------------------------------------------------------
@@ -288,20 +384,76 @@ probability. It loads the champion model from the UC registry and applies the
 SAME feature engineering as training (company_age, annual_wage) via
 easyvisa.transforms, so UI and model always agree.
 
-Run locally:
+14a. RUN LOCALLY (quick test)
     pip install -r app/requirements.txt
-    export DATABRICKS_HOST=https://<workspace>.databricks.net
-    export DATABRICKS_TOKEN=<token>
+    export DATABRICKS_HOST=https://<workspace>.azuredatabricks.net
+    export DATABRICKS_TOKEN=<personal-access-token>
     streamlit run app/streamlit_app.py
+    # opens http://localhost:8501
 
-Deploy as a Databricks App:
+14b. DEPLOY INTERNALLY ON DATABRICKS APPS (auth-gated managed URL)
+Databricks Apps hosts the Streamlit app on managed compute and gives you a stable
+HTTPS URL like https://easyvisa-predictor-<id>.<region>.databricksapps.com. It is
+NOT public: only users who log into your Databricks account AND have CAN_USE on the
+app can open it. This is the recommended internal option.
+
+Prerequisites:
+  - Databricks Apps enabled for the workspace (Premium/Enterprise). Confirm that
+    Compute -> Apps exists, and that `databricks apps --help` works (update the CLI
+    if the `apps` command is missing).
+  - The champion model already registered (run the training pipeline at least once),
+    i.e. <catalog>.<schema>.easyvisa_visa_approval@champion exists.
+
+Step 1 - create the app (Databricks auto-provisions a service principal for it):
     databricks apps create easyvisa-predictor
-    databricks sync . /Workspace/Users/<you>/easyvisa-mlops
+
+Step 2 - read the app's service principal (you did NOT create this; Databricks did):
+    databricks apps get easyvisa-predictor
+    # note the service_principal_name / service_principal_client_id in the output.
+    # (UI: Compute -> Apps -> easyvisa-predictor -> Authorization / App resources)
+
+Step 3 - grant that service principal access to the model (else prediction fails).
+Run in a SQL editor / notebook, substituting the SP from step 2 and your prod schema:
+    GRANT USE CATALOG ON CATALOG onedatalakehouse_datascience_we TO `<app-service-principal>`;
+    GRANT USE SCHEMA  ON SCHEMA  onedatalakehouse_datascience_we.easyvisa_prod TO `<app-service-principal>`;
+    GRANT EXECUTE     ON MODEL   onedatalakehouse_datascience_we.easyvisa_prod.easyvisa_visa_approval TO `<app-service-principal>`;
+
+Step 4 - upload the code and deploy:
+    databricks sync app /Workspace/Users/<you>/easyvisa-predictor
     databricks apps deploy easyvisa-predictor \
-        --source-code-path /Workspace/Users/<you>/easyvisa-mlops
-The app service principal needs USE CATALOG/SCHEMA and EXECUTE on the model
-<catalog>.<schema>.easyvisa_visa_approval. app/app.yaml holds the start command.
-You can add an app-deploy step to .github/workflows/cd.yml after bundle deploy.
+        --source-code-path /Workspace/Users/<you>/easyvisa-predictor
+    # app.yaml holds the start command (streamlit run app/streamlit_app.py ...).
+
+Step 5 - get the URL and check status:
+    databricks apps get easyvisa-predictor        # shows the app URL + RUNNING status
+    # open the URL in a browser (you will be asked to log in to Databricks).
+
+Step 6 - control who can open it:
+    In the app's Permissions (UI or API), add the users/groups that should have
+    CAN_USE. Remove "All users" if you want it tight. This is the whole access surface.
+
+Step 7 (if the app cannot reach the registry) - pin the tracking URI:
+    Add near the top of app/streamlit_app.py:
+        import mlflow
+        mlflow.set_tracking_uri("databricks")
+    (Harmless if not needed. The registry uri is already set to databricks-uc by
+    ChampionModel.)
+
+Redeploy after any code change:
+    databricks sync app /Workspace/Users/<you>/easyvisa-predictor
+    databricks apps deploy easyvisa-predictor \
+        --source-code-path /Workspace/Users/<you>/easyvisa-predictor
+You can also add these two commands as a final step in .github/workflows/cd.yml so a
+merge/tag redeploys the app automatically.
+
+Notes:
+  - The default environment the app loads is set by the sidebar in streamlit_app.py
+    ("prod"). Point the grants above at whatever schema that environment uses.
+  - app/requirements.txt installs catboost/lightgbm/xgboost so the app can load any
+    winning flavor; that makes the image heavier (slower cold start). Trim it if you
+    know the champion family.
+  - CLI flags for `apps create/sync/deploy/get` have changed across CLI versions; run
+    `databricks apps --help` to confirm the exact syntax on your version.
 
 ================================================================================
 END
