@@ -70,3 +70,22 @@ resources:
             parameters: ["--env", "${var.env}", "--catalog", "${var.catalog}", "--schema", "${var.schema}"]
           libraries:
             - whl: ./dist/*.whl
+
+# --- Optional: no-code retraining trigger (alternative to the in-stage Jobs API call)
+# Set Config.auto_retrain=false and let the JOB orchestrate retraining instead:
+#
+#     - task_key: check_retrain
+#       depends_on:
+#         - task_key: monitoring
+#       condition_task:
+#         op: EQUAL_TO
+#         left: "{{tasks.monitoring.values.retrain}}"
+#         right: "1"
+#     - task_key: trigger_retraining
+#       depends_on:
+#         - task_key: check_retrain
+#           outcome: "true"
+#       run_job_task:
+#         job_id: ${resources.jobs.easyvisa_training_pipeline.id}
+#
+# The monitoring stage already publishes the `retrain` task value via dbutils.

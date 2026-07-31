@@ -250,6 +250,59 @@ Models (multi-model tuning): CatBoost, LightGBM, XGBoost, RandomForest and
 - KS/PSI errors on first monitoring run: monitoring needs the drift reference
   table, which train.py writes - run the training pipeline before monitoring.
 
+
+--------------------------------------------------------------------------------
+13. AUTOMATED RETRAINING (drift + metric threshold)
+--------------------------------------------------------------------------------
+The monitoring stage (05) now DECIDES and can TRIGGER retraining. It retrains when:
+  - data drift  : any feature PSI > cfg.psi_threshold (default 0.2), OR
+  - model drift : prediction PSI up, or AUC dropped > cfg.auc_drop_threshold vs baseline, OR
+  - metric floor: live AUC < cfg.min_auc_threshold (default 0.75, absolute).
+
+It publishes the decision two ways:
+  (a) In-stage Jobs API call (default): with cfg.auto_retrain=true the stage calls
+      the Databricks Jobs API to run the job whose name contains
+      "EasyVisa Training Pipeline". The monitoring job's run identity needs
+      CAN_MANAGE_RUN on the training job (grant it in the job permissions, or to
+      the prod service principal).
+  (b) Job task value: it always sets a `retrain` task value (0/1). To let the JOB
+      orchestrate instead of the API call, set cfg.auto_retrain=false (conf/*.yml)
+      and uncomment the condition_task + run_job_task block at the bottom of
+      resources/easyvisa_pipeline.job.yml. That is the pure-DABs, no-extra-perms path.
+
+Tune thresholds in conf/dev.yml / conf/prod.yml, e.g.:
+    min_auc_threshold: 0.78
+    psi_threshold: 0.2
+    auc_drop_threshold: 0.05
+    auto_retrain: true
+
+Note: performance/metric checks need labels in the current window (case_status).
+For pure data-drift triggering (no labels yet), the PSI rule still fires.
+
+--------------------------------------------------------------------------------
+14. STREAMLIT PREDICTION APP
+--------------------------------------------------------------------------------
+app/streamlit_app.py is a one-page UI: the user enters an application (continent,
+education, wage, employer size, etc.) and gets the certification prediction and
+probability. It loads the champion model from the UC registry and applies the
+SAME feature engineering as training (company_age, annual_wage) via
+easyvisa.transforms, so UI and model always agree.
+
+Run locally:
+    pip install -r app/requirements.txt
+    export DATABRICKS_HOST=https://<workspace>.databricks.net
+    export DATABRICKS_TOKEN=<token>
+    streamlit run app/streamlit_app.py
+
+Deploy as a Databricks App:
+    databricks apps create easyvisa-predictor
+    databricks sync . /Workspace/Users/<you>/easyvisa-mlops
+    databricks apps deploy easyvisa-predictor \
+        --source-code-path /Workspace/Users/<you>/easyvisa-mlops
+The app service principal needs USE CATALOG/SCHEMA and EXECUTE on the model
+<catalog>.<schema>.easyvisa_visa_approval. app/app.yaml holds the start command.
+You can add an app-deploy step to .github/workflows/cd.yml after bundle deploy.
+
 ================================================================================
 END
 ================================================================================

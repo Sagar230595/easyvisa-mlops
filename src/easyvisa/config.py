@@ -11,7 +11,6 @@ try:
 except Exception:  # pragma: no cover
     yaml = None
 
-# --- Feature contract -------------------------------------------------------
 NUMERIC_FEATURES: List[str] = ["no_of_employees", "company_age", "annual_wage"]
 CATEGORICAL_FEATURES: List[str] = [
     "continent",
@@ -29,14 +28,20 @@ POSITIVE_CLASS: str = "Certified"
 
 WAGE_MULTIPLIER: Dict[str, float] = {"Hour": 2080.0, "Week": 52.0, "Month": 12.0, "Year": 1.0}
 
-# Model families tuned with Optuna and compared during training.
 DEFAULT_CANDIDATE_MODELS: List[str] = [
-    "catboost",
-    "lightgbm",
-    "xgboost",
-    "random_forest",
-    "logistic_regression",
+    "catboost", "lightgbm", "xgboost", "random_forest", "logistic_regression",
 ]
+
+# Allowed category values (also used by the Streamlit app)
+CATEGORY_OPTIONS: Dict[str, List[str]] = {
+    "continent": ["Asia", "Africa", "Europe", "North America", "South America", "Oceania"],
+    "education_of_employee": ["High School", "Bachelor's", "Master's", "Doctorate"],
+    "has_job_experience": ["Y", "N"],
+    "requires_job_training": ["Y", "N"],
+    "region_of_employment": ["West", "Northeast", "South", "Midwest", "Island"],
+    "unit_of_wage": ["Hour", "Week", "Month", "Year"],
+    "full_time_position": ["Y", "N"],
+}
 
 _CONF_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "conf"
@@ -62,11 +67,17 @@ class Config:
     model_base_name: str = "easyvisa_visa_approval"
     champion_alias: str = "champion"
 
-    # Training / tuning
     candidate_models: List[str] = field(default_factory=lambda: list(DEFAULT_CANDIDATE_MODELS))
-    n_trials: int = 30                 # Optuna trials PER model family
+    n_trials: int = 30
     random_seed: int = 42
     test_size: float = 0.2
+
+    # ---- Retraining policy ----
+    auto_retrain: bool = True            # trigger the training job when a rule fires
+    min_auc_threshold: float = 0.75      # retrain if live AUC drops below this (absolute)
+    psi_threshold: float = 0.2           # data-drift PSI threshold
+    auc_drop_threshold: float = 0.05     # retrain if AUC falls this far below baseline
+    training_job_match: str = "EasyVisa Training Pipeline"  # substring used to find the job
 
     @property
     def raw_volume(self) -> str:

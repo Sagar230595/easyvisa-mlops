@@ -1,16 +1,23 @@
-"""Stage 05 - data & model drift monitoring (informational only)."""
+"""Stage 05 - data & model drift monitoring WITH automated retraining triggers.
+
+Retraining fires when any of these rules is true:
+  * data drift  - any feature PSI above the threshold
+  * model drift - prediction-distribution PSI up OR AUC dropped vs. baseline
+  * metric floor - live AUC below cfg.min_auc_threshold (absolute)
+
+The decision is published as a job task value (``retrain``) and, when
+cfg.auto_retrain is set, the training pipeline job is launched via the Jobs API.
+"""
 import numpy as np
 import pandas as pd
 
 from ..base import PipelineStage
 from ..config import FEATURES, CATEGORICAL_FEATURES, LABEL_COL
-from ..infra import MLflowManager
+from ..infra import MLflowManager, Retrainer, get_dbutils
 from ..models import ChampionModel
 
 
 class DriftDetector:
-    """PSI / KS based drift statistics."""
-
     def __init__(self, psi_threshold: float = 0.2):
         self.psi_threshold = psi_threshold
 
@@ -56,15 +63,31 @@ class DriftDetector:
         return pd.DataFrame(rows)
 
 
+class RetrainPolicy:
+    """Decides whether to retrain and why (pure logic, unit-testable)."""
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+
+    def decide(self, data_drift: bool, model_drift: bool, current_auc):
+        reasons = []
+        if data_drift:
+            reasons.append("data_drift")
+        if model_drift:
+            reasons.append("model_drift")
+        if current_auc is not None and current_auc < self.cfg.min_auc_threshold:
+            reasons.append(f"auc_below_{self.cfg.min_auc_threshold}")
+        return (len(reasons) > 0, reasons)
+
+
 class DriftMonitoringStage(PipelineStage):
     name = "monitoring"
 
-    def __init__(self, cfg, current_table: str = None,
-                 psi_threshold: float = 0.2, auc_drop_threshold: float = 0.05):
+    def __init__(self, cfg, current_table: str = None):
         super().__init__(cfg)
         self.current_table = current_table
-        self.detector = DriftDetector(psi_threshold)
-        self.auc_drop_threshold = auc_drop_threshold
+        self.detector = DriftDetector(cfg.psi_threshold)
+        self.policy = RetrainPolicy(cfg)
 
     def run(self):
         import mlflow
@@ -93,13 +116,17 @@ class DriftMonitoringStage(PipelineStage):
             current_auc = float(roc_auc_score(cur[LABEL_COL], cur_proba))
         performance_drift = bool(
             baseline_auc is not None and current_auc is not None
-            and (baseline_auc - current_auc) > self.auc_drop_threshold
+            and (baseline_auc - current_auc) > self.cfg.auc_drop_threshold
         )
         model_drift = bool(prediction_drift or performance_drift)
+
+        # ---- Retrain decision ----
+        retrain, reasons = self.policy.decide(data_drift, model_drift, current_auc)
 
         with mlflow.start_run(run_name="drift_monitoring"):
             mlflow.log_param("monitored_model_name", champion.model_name)
             mlflow.log_param("monitored_model_version", champion.version)
+            mlflow.log_param("retrain_reasons", ",".join(reasons) or "none")
             for _, r in drift_df.iterrows():
                 if pd.notna(r["psi"]):
                     mlflow.log_metric(f"psi_{r['feature']}", float(r["psi"]))
@@ -110,6 +137,7 @@ class DriftMonitoringStage(PipelineStage):
                 mlflow.log_metric("current_auc", float(current_auc))
             mlflow.log_metric("data_drift", int(data_drift))
             mlflow.log_metric("model_drift", int(model_drift))
+            mlflow.log_metric("retrain", int(retrain))
 
         report = drift_df.copy()
         report["monitored_model_name"] = champion.model_name
@@ -118,12 +146,30 @@ class DriftMonitoringStage(PipelineStage):
         report["current_auc"] = current_auc
         report["data_drift"] = data_drift
         report["model_drift"] = model_drift
+        report["retrain"] = retrain
+        report["retrain_reasons"] = ",".join(reasons) or "none"
         report["evaluated_at"] = pd.Timestamp.now()
         (
             self.spark.createDataFrame(report)
             .write.mode("append").option("mergeSchema", "true")
             .saveAsTable(self.cfg.fqn(self.cfg.drift_report_table))
         )
+
+        # Publish the decision as a job task value (for a condition/run_job task)
+        db = get_dbutils(self.spark)
+        if db is not None:
+            try:
+                db.jobs.taskValues.set(key="retrain", value=int(retrain))
+            except Exception:
+                pass
+
+        # Programmatic trigger via the Jobs API
+        if retrain and self.cfg.auto_retrain:
+            try:
+                run_id, job_id = Retrainer(self.cfg).trigger()
+                self.log.info("Retraining triggered: run %s (job %s)", run_id, job_id)
+            except Exception as exc:
+                self.log.warning("Could not trigger retraining automatically: %s", exc)
 
         print("=" * 56)
         print("EASYVISA DRIFT MONITORING SUMMARY")
@@ -133,9 +179,9 @@ class DriftMonitoringStage(PipelineStage):
         if data_drift:
             print("  Drifting features:", drift_df.loc[drift_df['drifted'], 'feature'].tolist())
         print(f"Model drift : {'DETECTED' if model_drift else 'none'}")
-        if not (data_drift or model_drift):
-            print("No significant drift. Model and data look stable.")
-        else:
-            print("Drift detected - consider a retraining run.")
+        if current_auc is not None:
+            print(f"Live AUC    : {round(current_auc, 4)} (baseline {baseline_auc}, floor {self.cfg.min_auc_threshold})")
+        print(f"RETRAIN     : {'YES' if retrain else 'no'}  reasons={reasons or ['none']}")
         print("=" * 56)
-        return dict(data_drift=data_drift, model_drift=model_drift)
+        return dict(data_drift=data_drift, model_drift=model_drift,
+                    retrain=retrain, reasons=reasons)
