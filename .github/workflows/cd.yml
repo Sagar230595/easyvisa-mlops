@@ -2,8 +2,8 @@ name: CD
 
 on:
   push:
-    branches: [main]        # deploy to dev on merge to main
-    tags: ["v*"]            # deploy to prod on a version tag
+    branches: [main]        # deploy to dev on merge to main. 
+    tags: ["v*"]            # deploy to prod on a version tag.
 
 jobs:
   deploy:
