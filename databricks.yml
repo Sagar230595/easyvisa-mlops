@@ -30,7 +30,7 @@ targets:
     mode: development
     default: true
     workspace:
-      host: https://REPLACE-WITH-YOUR-WORKSPACE.azuredatabricks.net
+      host: https://dbc-012dffbd-0345.cloud.databricks.com
     variables:
       env: dev
       schema: easyvisa_dev
@@ -38,7 +38,7 @@ targets:
   prod:
     mode: production
     workspace:
-      host: https://REPLACE-WITH-YOUR-WORKSPACE.azuredatabricks.net
+      host: https://dbc-012dffbd-0345.cloud.databricks.com
     variables:
       env: prod
       schema: easyvisa_prod
