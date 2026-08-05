@@ -30,7 +30,7 @@ def load(env: str):
     return cfg, ChampionModel(cfg)
 
 
-st.title("EasyVisa - visa approval predictor")
+st.title("EasyVisa - visa approval predictor part 2")
 st.write("Enter the application details and get the model's certification prediction.")
 
 env = st.sidebar.selectbox("Environment", ["prod", "dev"], index=0)
