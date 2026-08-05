@@ -1,4 +1,4 @@
-from ..config import NUMERIC_FEATURES, CATEGORICAL_FEATURES
+from ..config import CATEGORICAL_FEATURES, NUMERIC_FEATURES
 from .base import BaseModel
 
 

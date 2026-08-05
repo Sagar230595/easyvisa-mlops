@@ -1,8 +1,12 @@
 """Stage 02 - preprocessing + feature engineering (Spark)."""
 from ..base import PipelineStage
 from ..config import (
-    WAGE_MULTIPLIER, TARGET_COL, LABEL_COL, POSITIVE_CLASS,
-    NUMERIC_FEATURES, CATEGORICAL_FEATURES,
+    CATEGORICAL_FEATURES,
+    LABEL_COL,
+    NUMERIC_FEATURES,
+    POSITIVE_CLASS,
+    TARGET_COL,
+    WAGE_MULTIPLIER,
 )
 
 

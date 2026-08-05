@@ -3,7 +3,7 @@ import os
 from datetime import datetime
 
 from ..base import PipelineStage
-from ..config import FEATURES, CATEGORICAL_FEATURES
+from ..config import CATEGORICAL_FEATURES, FEATURES
 from ..models import ChampionModel
 
 

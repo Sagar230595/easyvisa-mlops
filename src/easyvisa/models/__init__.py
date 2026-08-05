@@ -4,9 +4,9 @@ from typing import Dict, List, Optional
 from .base import BaseModel
 from .catboost_model import CatBoostModel
 from .lightgbm_model import LightGBMModel
-from .xgboost_model import XGBoostModel
-from .random_forest_model import RandomForestModel
 from .logistic_regression_model import LogisticRegressionModel
+from .random_forest_model import RandomForestModel
+from .xgboost_model import XGBoostModel
 
 _ALL_MODEL_CLASSES = [
     CatBoostModel,

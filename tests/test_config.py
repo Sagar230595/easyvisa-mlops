@@ -1,4 +1,4 @@
-from easyvisa.config import Config, FEATURES, CATEGORICAL_FEATURES
+from easyvisa.config import CATEGORICAL_FEATURES, FEATURES, Config
 
 
 def test_defaults():

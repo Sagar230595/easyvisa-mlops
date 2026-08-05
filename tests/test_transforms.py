@@ -1,5 +1,9 @@
 from easyvisa.transforms import (
-    wage_multiplier, annualise_wage, company_age, fix_employee_count, encode_label,
+    annualise_wage,
+    company_age,
+    encode_label,
+    fix_employee_count,
+    wage_multiplier,
 )
 
 

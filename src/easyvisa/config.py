@@ -2,9 +2,9 @@
 
 Nothing here imports pyspark / catboost, so it is safe to import in CI.
 """
+import os
 from dataclasses import dataclass, field, fields
 from typing import Dict, List, Optional
-import os
 
 try:
     import yaml

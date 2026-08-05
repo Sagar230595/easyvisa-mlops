@@ -15,9 +15,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import pandas as pd
 import streamlit as st
 
-from easyvisa.config import Config, FEATURES, CATEGORY_OPTIONS
-from easyvisa.transforms import company_age, annualise_wage, fix_employee_count
+from easyvisa.config import CATEGORY_OPTIONS, FEATURES, Config
 from easyvisa.models import ChampionModel
+from easyvisa.transforms import annualise_wage, company_age, fix_employee_count
 
 st.set_page_config(page_title="EasyVisa approval predictor", page_icon="check", layout="centered")
 

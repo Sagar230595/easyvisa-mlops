@@ -2,10 +2,11 @@
 estimator construction, categorical handling, CV, and MLflow flavor.
 """
 from abc import ABC, abstractmethod
+
 import numpy as np
 import pandas as pd
 
-from ..config import NUMERIC_FEATURES, CATEGORICAL_FEATURES
+from ..config import CATEGORICAL_FEATURES
 
 
 class BaseModel(ABC):
@@ -30,8 +31,8 @@ class BaseModel(ABC):
         return X
 
     def cv_auc(self, params: dict, X, y, seed: int, n_splits: int = 5) -> float:
-        from sklearn.model_selection import StratifiedKFold
         from sklearn.metrics import roc_auc_score
+        from sklearn.model_selection import StratifiedKFold
 
         Xp = self.prep_features(X)
         skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)

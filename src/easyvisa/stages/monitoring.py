@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from ..base import PipelineStage
-from ..config import FEATURES, CATEGORICAL_FEATURES, LABEL_COL
+from ..config import CATEGORICAL_FEATURES, FEATURES, LABEL_COL
 from ..infra import MLflowManager, Retrainer, get_dbutils
 from ..models import ChampionModel
 

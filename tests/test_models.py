@@ -1,4 +1,5 @@
 import pandas as pd
+
 from easyvisa.models import ModelRegistry
 
 

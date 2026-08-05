@@ -1,6 +1,6 @@
 """Stage 03 - multi-model training orchestrated by the Trainer class."""
 from ..base import PipelineStage
-from ..config import FEATURES, CATEGORICAL_FEATURES, LABEL_COL
+from ..config import CATEGORICAL_FEATURES, FEATURES, LABEL_COL
 from ..infra import MLflowManager
 from ..models import ModelRegistry
 
@@ -33,7 +33,11 @@ class Trainer:
     @staticmethod
     def holdout_metrics(y_true, proba):
         from sklearn.metrics import (
-            roc_auc_score, accuracy_score, f1_score, precision_score, recall_score,
+            accuracy_score,
+            f1_score,
+            precision_score,
+            recall_score,
+            roc_auc_score,
         )
         pred = (proba >= 0.5).astype(int)
         return dict(
@@ -45,8 +49,8 @@ class Trainer:
         )
 
     def _tune(self, model, X_tr, y_tr):
-        import optuna
         import mlflow
+        import optuna
         study = optuna.create_study(
             direction="maximize", sampler=optuna.samplers.TPESampler(seed=self.cfg.random_seed)
         )
@@ -61,8 +65,8 @@ class Trainer:
         return study
 
     def run(self):
-        import optuna
         import mlflow
+        import optuna
         from mlflow.models.signature import infer_signature
 
         optuna.logging.set_verbosity(optuna.logging.WARNING)

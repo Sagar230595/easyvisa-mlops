@@ -3,7 +3,7 @@
 These contain the row-level business logic used by the Spark feature pipeline.
 Keeping them free of pyspark/catboost makes them fast and trivial to unit test.
 """
-from .config import WAGE_MULTIPLIER, POSITIVE_CLASS
+from .config import POSITIVE_CLASS, WAGE_MULTIPLIER
 
 
 def wage_multiplier(unit_of_wage: str) -> float:
