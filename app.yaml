@@ -3,7 +3,7 @@ command:
   - run
   - app/streamlit_app.py
   - --server.port
-  - "8501"
+  - $DATABRICKS_APP_PORT
   - --server.address
   - "0.0.0.0"
 

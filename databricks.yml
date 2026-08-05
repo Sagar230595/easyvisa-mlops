@@ -25,6 +25,12 @@ variables:
     description: Cluster node type.
     default: Standard_DS3_v2
 
+resources:
+  apps:
+    easyvisa_app:
+      name: easyvisa-predictor-${var.env}
+      source_code_path: .
+
 targets:
   dev:
     mode: development

@@ -12,6 +12,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+import mlflow
+mlflow.set_tracking_uri("databricks")
 import pandas as pd
 import streamlit as st
 
