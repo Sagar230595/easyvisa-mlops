@@ -30,7 +30,7 @@ def load(env: str):
     return cfg, ChampionModel(cfg)
 
 
-st.title("EasyVisa - Visa Approval Predictor")
+st.title("EasyVisa - Visa Approval Predictor trial 2")
 st.write("Enter the application details and get the model's certification prediction.")
 
 # Get environment from env var (defaulting to dev for local runs)
