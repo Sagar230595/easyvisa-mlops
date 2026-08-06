@@ -37,7 +37,7 @@ jobs:
       - name: Deploy bundle
         run: databricks bundle deploy -t ${{ steps.target.outputs.target }}
 
-      # Optional: kick off a training run right after a prod deploy
-      # - name: Run training pipeline
-      #   if: steps.target.outputs.target == 'prod'
-      #   run: databricks bundle run easyvisa_training_pipeline -t prod
+      - name: Deploy App Container
+        run: |
+          APP_PATH=$(databricks bundle summary -t ${{ steps.target.outputs.target }} -o json | jq -r '.resources.apps.easyvisa_app.source_code_path')
+          databricks apps deploy easyvisa-predictor-${{ steps.target.outputs.target }} --source-code-path "$APP_PATH"
