@@ -33,10 +33,12 @@ def load(env: str):
 st.title("EasyVisa - visa approval predictor part 2")
 st.write("Enter the application details and get the model's certification prediction.")
 
-env = st.sidebar.selectbox("Environment", ["prod", "dev"], index=0)
+# Get environment from env var (defaulting to dev for local runs)
+env = os.environ.get("STREAMLIT_ENV", "dev")
+
 try:
     cfg, champion = load(env)
-    st.sidebar.success(f"Model: {champion.model_name}\nversion {champion.version}")
+    st.sidebar.success(f"Environment: **{env.upper()}**\n\nModel: {champion.model_name}\nversion {champion.version}")
 except Exception as exc:
     st.error(f"Could not load the champion model: {exc}")
     st.stop()

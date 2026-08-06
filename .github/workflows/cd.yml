@@ -32,6 +32,9 @@ jobs:
             echo "target=dev" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Set App Env in app.yaml
+        run: sed -i "s/value: prod/value: ${{ steps.target.outputs.target }}/g" app.yaml
+
       - name: Validate bundle
         run: databricks bundle validate -t ${{ steps.target.outputs.target }}
 
