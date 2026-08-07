@@ -48,5 +48,3 @@ targets:
     variables:
       env: prod
       schema: easyvisa_prod
-    run_as:
-      service_principal_name: REPLACE-WITH-SERVICE-PRINCIPAL-APP-ID
